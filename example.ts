@@ -1,239 +1,187 @@
 /**
  * Example usage of @harshil1712/tanstack-cf-ai-adapter
  *
- * This file shows how to use the Cloudflare AI Gateway adapter
- * with TanStack AI in a Cloudflare Worker using the withAiGateway function.
+ * ⚠️ THIS FILE CONTAINS SIMPLIFIED EXAMPLES
+ *
+ * For complete, working examples with Hono, React, and proper error handling,
+ * see the `example/` directory in this repository.
+ *
+ * The examples below show the basic API usage.
  */
 
-import { AI } from '@tanstack/ai'
-import { anthropic } from '@tanstack/ai-anthropic'
-import { openai } from '@tanstack/ai-openai'
-import { withAiGateway } from './src'
+import { chat, toStreamResponse } from "@tanstack/ai";
+import { openaiGateway, anthropicGateway } from "./src";
 
 // Define your Worker environment with the AI binding
 interface Env {
-  AI: any // The [ai] binding from wrangler.toml
-  ANTHROPIC_API_KEY: string
-  OPENAI_API_KEY: string
-  CF_API_TOKEN?: string
+  AI: any; // The [ai] binding from wrangler.toml
+  OPENAI_API_KEY: string;
+  ANTHROPIC_API_KEY: string;
+  CF_API_TOKEN?: string; // For BYOK mode
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Example 1: Basic usage with standard authentication
-    return handleBasicExample(request, env)
+    // Example 1: Standard authentication with OpenAI
+    return handleOpenAIExample(request, env);
 
-    // Example 2: Multiple providers
-    // return handleMultipleProviders(request, env)
+    // Example 2: Standard authentication with Anthropic
+    // return handleAnthropicExample(request, env)
 
-    // Example 3: BYOK (Stored Keys)
+    // Example 3: BYOK (Bring Your Own Keys) - ✅ Working
     // return handleBYOKExample(request, env)
 
-    // Example 4: Unified Billing
+    // Example 4: Unified Billing - ⚠️ NOT working yet
     // return handleUnifiedBillingExample(request, env)
-
-    // Example 5: Advanced features (caching, metadata)
-    // return handleAdvancedFeatures(request, env)
   },
-}
+};
 
 /**
- * Example 1: Basic usage with standard authentication
+ * Example 1: OpenAI with standard authentication (✅ Working)
  */
-async function handleBasicExample(
+async function handleOpenAIExample(
   request: Request,
-  env: Env,
+  env: Env
 ): Promise<Response> {
-  // Create gateway wrapper
-  const gateway = withAiGateway(env.AI, 'my-gateway')
-
-  // Wrap the Anthropic adapter
-  const ai = new AI({
-    adapters: {
-      anthropic: await gateway(anthropic, {
-        apiKey: env.ANTHROPIC_API_KEY,
-      }),
-    },
-  })
-
-  // Use normally - all requests go through the gateway!
   try {
-    const stream = await ai.chatStream({
-      adapter: 'anthropic',
-      model: 'claude-3-5-sonnet-20241022',
+    // Create OpenAI adapter configured for AI Gateway
+    const adapter = await openaiGateway(env.AI, "my-gateway", {
+      apiKey: env.OPENAI_API_KEY,
+    });
+
+    // Use with TanStack AI's chat function
+    const stream = await chat({
+      adapter,
+      model: "gpt-4",
       messages: [
         {
-          role: 'user',
-          content: 'Write a haiku about Cloudflare Workers',
+          role: "user",
+          content: "Write a haiku about Cloudflare Workers",
         },
       ],
-    })
+    });
 
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    })
+    // Convert to Response
+    return toStreamResponse(stream);
   } catch (error) {
-    console.error('Error:', error)
+    console.error("Error:", error);
     return new Response(
-      JSON.stringify({ error: 'Failed to process request' }),
+      JSON.stringify({
+        error:
+          error instanceof Error ? error.message : "Failed to process request",
+      }),
       {
         status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      },
-    )
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 }
 
 /**
- * Example 2: Using multiple providers
+ * Example 2: Anthropic with standard authentication (✅ Working)
  */
-async function handleMultipleProviders(
+async function handleAnthropicExample(
   request: Request,
-  env: Env,
+  env: Env
 ): Promise<Response> {
-  const gateway = withAiGateway(env.AI, 'my-gateway')
+  try {
+    const adapter = await anthropicGateway(env.AI, "my-gateway", {
+      apiKey: env.ANTHROPIC_API_KEY,
+    });
 
-  const ai = new AI({
-    adapters: {
-      anthropic: await gateway(anthropic, {
-        apiKey: env.ANTHROPIC_API_KEY,
-      }),
-      openai: await gateway(openai, {
-        apiKey: env.OPENAI_API_KEY,
-      }),
-    },
-  })
+    const stream = await chat({
+      adapter,
+      model: "claude-3-haiku",
+      messages: [
+        {
+          role: "user",
+          content: "Hello!",
+        },
+      ],
+    });
 
-  // Use either provider - both go through the gateway
-  const url = new URL(request.url)
-  const provider = url.searchParams.get('provider') || 'anthropic'
-
-  const stream = await ai.chatStream({
-    adapter: provider as 'anthropic' | 'openai',
-    model:
-      provider === 'openai' ? 'gpt-4' : 'claude-3-5-sonnet-20241022',
-    messages: [
-      { role: 'user', content: 'Hello! Tell me about yourself.' },
-    ],
-  })
-
-  return new Response(stream, {
-    headers: { 'Content-Type': 'text/event-stream' },
-  })
+    return toStreamResponse(stream);
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: "Failed to process request" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
 }
 
 /**
- * Example 3: BYOK (Bring Your Own Keys)
- * Keys are stored in Cloudflare dashboard
+ * Example 3: BYOK (Bring Your Own Keys) (✅ Working)
+ *
+ * Prerequisites:
+ * 1. Go to Cloudflare Dashboard → AI Gateway → your-gateway
+ * 2. Navigate to "Provider Keys" section
+ * 3. Add your API key with a name (e.g., "OPENAI_KEY_1")
+ * 4. Get a Cloudflare API token from your account settings
  */
 async function handleBYOKExample(
   request: Request,
-  env: Env,
+  env: Env
 ): Promise<Response> {
   if (!env.CF_API_TOKEN) {
-    return new Response('CF_API_TOKEN not configured', { status: 500 })
+    return new Response("CF_API_TOKEN not configured", { status: 500 });
   }
 
-  const gateway = withAiGateway(env.AI, 'my-gateway')
+  try {
+    const adapter = await openaiGateway(env.AI, "my-gateway", {
+      byok: true, // Use stored keys from dashboard
+      cfToken: env.CF_API_TOKEN,
+    });
 
-  const ai = new AI({
-    adapters: {
-      anthropic: await gateway(anthropic, {
-        storedKey: 'ANTHROPIC_KEY_1', // Reference to key in dashboard
-        cfToken: env.CF_API_TOKEN,
-      }),
-    },
-  })
+    const stream = await chat({
+      adapter,
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Hello!" }],
+    });
 
-  const stream = await ai.chatStream({
-    adapter: 'anthropic',
-    model: 'claude-3-5-sonnet-20241022',
-    messages: [{ role: 'user', content: 'Hello!' }],
-  })
-
-  return new Response(stream, {
-    headers: { 'Content-Type': 'text/event-stream' },
-  })
+    return toStreamResponse(stream);
+  } catch (error) {
+    return new Response(JSON.stringify({ error: "BYOK request failed" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 }
 
 /**
- * Example 4: Unified Billing
- * Use Cloudflare's billing - no provider API keys needed
+ * Example 4: Unified Billing (⚠️ NOT WORKING YET)
+ *
+ * This mode is accepted in the API but not yet functional.
+ * Use standard authentication or BYOK instead.
  */
 async function handleUnifiedBillingExample(
   request: Request,
-  env: Env,
+  env: Env
 ): Promise<Response> {
   if (!env.CF_API_TOKEN) {
-    return new Response('CF_API_TOKEN not configured', { status: 500 })
+    return new Response("CF_API_TOKEN not configured", { status: 500 });
   }
 
-  const gateway = withAiGateway(env.AI, 'my-gateway')
+  try {
+    // ⚠️ This will not work - unified billing is not implemented yet
+    const adapter = await openaiGateway(env.AI, "my-gateway", {
+      unifiedBilling: true,
+      cfToken: env.CF_API_TOKEN,
+    });
 
-  const ai = new AI({
-    adapters: {
-      anthropic: await gateway(anthropic, {
-        unifiedBilling: true,
-        cfToken: env.CF_API_TOKEN,
-      }),
-    },
-  })
+    const stream = await chat({
+      adapter,
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Hello!" }],
+    });
 
-  const stream = await ai.chatStream({
-    adapter: 'anthropic',
-    model: 'claude-3-5-sonnet-20241022',
-    messages: [{ role: 'user', content: 'Hello!' }],
-  })
-
-  return new Response(stream, {
-    headers: { 'Content-Type': 'text/event-stream' },
-  })
-}
-
-/**
- * Example 5: Advanced features - caching and metadata
- */
-async function handleAdvancedFeatures(
-  request: Request,
-  env: Env,
-): Promise<Response> {
-  const gateway = withAiGateway(env.AI, 'my-gateway')
-
-  const ai = new AI({
-    adapters: {
-      anthropic: await gateway(anthropic, {
-        auth: {
-          apiKey: env.ANTHROPIC_API_KEY,
-        },
-        cache: {
-          ttl: 3600, // Cache responses for 1 hour
-          skipCache: false,
-        },
-        metadata: {
-          environment: 'production',
-          worker: 'example-worker',
-          version: '1.0.0',
-        },
-        logging: {
-          skipLogging: false,
-        },
-      }),
-    },
-  })
-
-  const stream = await ai.chatStream({
-    adapter: 'anthropic',
-    model: 'claude-3-5-sonnet-20241022',
-    messages: [{ role: 'user', content: 'Hello!' }],
-  })
-
-  return new Response(stream, {
-    headers: { 'Content-Type': 'text/event-stream' },
-  })
+    return toStreamResponse(stream);
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: "Unified billing not yet supported" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
 }
 
 /**
@@ -247,7 +195,7 @@ async function handleAdvancedFeatures(
  * binding = "AI"
  *
  * # Add your API keys as secrets with:
- * # wrangler secret put ANTHROPIC_API_KEY
  * # wrangler secret put OPENAI_API_KEY
- * # wrangler secret put CF_API_TOKEN (for BYOK/Unified Billing)
+ * # wrangler secret put ANTHROPIC_API_KEY
+ * # wrangler secret put CF_API_TOKEN (for BYOK)
  */
