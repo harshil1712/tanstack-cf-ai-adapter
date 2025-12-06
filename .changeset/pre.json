@@ -1,0 +1,8 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "@harshil1712/tanstack-cf-ai-adapter": "0.0.1"
+  },
+  "changesets": []
+}
